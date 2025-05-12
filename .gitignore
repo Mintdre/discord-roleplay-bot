@@ -28,3 +28,4 @@ rust/data/*_memory.json
 *.log
 data/829217090480766998_user_memory.json
 elybot
+libely_rust.so
