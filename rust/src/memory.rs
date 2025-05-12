@@ -1,15 +1,14 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
-use std::io::{Read, Write, BufReader, BufWriter, Errorkind};
+use std::io::{Read, Write, BufReader, BufWriter, ErrorKind};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use lazy_static::lazy_static;
 use log::{info, warn, error};
 
-const MEMORY_DIR: &str = 'data';
-
-const MAX HISTORY_LEN: usize = 20;
+const MEMORY_DIR: &str = "data"; 
+const MAX_HISTORY_LEN: usize = 20; 
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Message {
@@ -27,19 +26,19 @@ lazy_static! {
     static ref SERVER_MEMORIES: Mutex<HashMap<String, ChatMemory>> = Mutex::new(HashMap::new());
 }
 
-fn get_memory_file_path(id: &str, memory_type: &str0 -> PathBuf {
+fn get_memory_file_path(id: &str, memory_type: &str) -> PathBuf {
     let dir = PathBuf::from(MEMORY_DIR);
-    let !dir.exsist() {
+    if !dir.exists() {
         fs::create_dir_all(&dir).expect("Failed to create memory directory");
     }
-    dir.join{format!("{}_memory.json", id, memory_type)}
+    dir.join(format!("{}_{}_memory.json", id, memory_type))
 }
 
-fn load_memory_from-file(path: &Path) -> Result<ChatMemory, std::io::Error> {
-    id !path.exists() {
+fn load_memory_from_file(path: &Path) -> Result<ChatMemory, std::io::Error> {
+    if !path.exists() {
         return Ok(ChatMemory::default());
     }
-    let file = FIle::open(path)?;
+    let file = File::open(path)?;
     let reader = BufReader::new(file);
     let memory = serde_json::from_reader(reader)
         .map_err(|e| std::io::Error::new(ErrorKind::InvalidData, e))?;
@@ -47,8 +46,7 @@ fn load_memory_from-file(path: &Path) -> Result<ChatMemory, std::io::Error> {
 }
 
 fn save_memory_to_file(path: &Path, memory: &ChatMemory) -> Result<(), std::io::Error> {
-    let file =
-OpenOptions::new().write(true).create(true).truncate(true).open(path)?;
+    let file = OpenOptions::new().write(true).create(true).truncate(true).open(path)?;
     let writer = BufWriter::new(file);
     serde_json::to_writer_pretty(writer, memory)
         .map_err(|e| std::io::Error::new(ErrorKind::Other, e))?;
@@ -63,21 +61,23 @@ pub fn get_memory(id: &str, memory_type: &str) -> ChatMemory {
     };
 
     if let Some(memory) = memories_map.get(id) {
-        info!("Loaded memory for {} {} from Cache", memory_type, id);
+        info!("Loaded memory for {} {} from cache", memory_type, id);
         return memory.clone();
     }
 
     let path = get_memory_file_path(id, memory_type);
     match load_memory_from_file(&path) {
         Ok(mut memory) => {
-            if memory.message.len() > MAX_HISTORY_LEN {
-                let start index = memory.message.len() - Max_HISTORY_LEN;
+            if memory.messages.len() > MAX_HISTORY_LEN {
+                let start_index = memory.messages.len() - MAX_HISTORY_LEN;
                 memory.messages = memory.messages.split_off(start_index);
             }
+            info!("Loaded memory for {} {} from file: {:?}", memory_type, id, path);
             memories_map.insert(id.to_string(), memory.clone());
-            }
+            memory
+        }
         Err(e) => {
-            warn!("Failed to laod memory for {} {}: {}, creating new.", memory_type, id, e);
+            warn!("Failed to load memory for {} {}: {}, creating new.", memory_type, id, e);
             let new_memory = ChatMemory::default();
             memories_map.insert(id.to_string(), new_memory.clone());
             new_memory
@@ -85,7 +85,7 @@ pub fn get_memory(id: &str, memory_type: &str) -> ChatMemory {
     }
 }
 
-pub fn update_memory(id: &str, memory_type: &str, user_prompt: %str, assistant_prompt: %str) {
+pub fn update_memory(id: &str, memory_type: &str, user_prompt: &str, assistant_response: &str) {
     let mut memories_map = match memory_type {
         "user" => USER_MEMORIES.lock().unwrap(),
         "server" => SERVER_MEMORIES.lock().unwrap(),
@@ -99,7 +99,7 @@ pub fn update_memory(id: &str, memory_type: &str, user_prompt: %str, assistant_p
             ChatMemory::default()
         })
     });
-
+    
     memory.messages.push(Message {
         role: "user".to_string(),
         content: user_prompt.to_string(),
@@ -113,14 +113,14 @@ pub fn update_memory(id: &str, memory_type: &str, user_prompt: %str, assistant_p
         let start_index = memory.messages.len() - MAX_HISTORY_LEN;
         memory.messages = memory.messages.split_off(start_index);
     }
-
+    
     memories_map.insert(id.to_string(), memory.clone());
 
     let path = get_memory_file_path(id, memory_type);
-    of let Err(e) = save_memory_to_file(&path, memory) {
+    if let Err(e) = save_memory_to_file(&path, memory) {
         error!("Failed to save memory for {} {}: {}", memory_type, id, e);
     } else {
-        ifno!("Saved memory for {} {} to file: {:?}", memory_type, id, path);
+        info!("Saved memory for {} {} to file: {:?}", memory_type, id, path);
     }
 }
 
@@ -138,7 +138,6 @@ pub fn setup_rust_logging() {
         .level(log::LevelFilter::Info)
         .chain(std::io::stdout())
         .apply()
-        .expect("Failed to set up logging");
-    info!("Rust loggiing initialized");
+        .expect("Failed to initialize logger");
+    info!("Rust logging initialized.");
 }
-
