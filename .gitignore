@@ -1,0 +1,30 @@
+# Environment file
+.env
+
+# Go build outputs
+go/elybot
+elybot # If built to root by Makefile
+
+# Rust build artifacts
+rust/target/
+rust/Cargo.lock # Optional, depends on your policy for library vs binary
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# Shared library if copied (though typically handled by build process)
+go/libely_rust.so
+go/libely_rust.dylib
+go/libely_rust.dll
+
+# Data files (user/server memory) - consider if you want to version example files but not actual data
+rust/data/*_memory.json
+# If you want to keep example files versioned, but ignore live data:
+rust/data/*_memory.json
+!rust/data/example_*.json
+
+# Log files
+*.log
+data/829217090480766998_user_memory.json
+elybot

@@ -1,14 +1,15 @@
+use chrono;
+use lazy_static::lazy_static;
+use log::{error, info, warn};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
-use std::io::{Read, Write, BufReader, BufWriter, ErrorKind};
+use std::io::{BufReader, BufWriter, ErrorKind}; // Removed Read, Write as they are not directly used
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
-use lazy_static::lazy_static;
-use log::{info, warn, error};
+use std::sync::Mutex; // Keep chrono for logging timestamp
 
-const MEMORY_DIR: &str = "data"; 
-const MAX_HISTORY_LEN: usize = 20; 
+const MEMORY_DIR: &str = "data";
+const MAX_HISTORY_LEN: usize = 20;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Message {
@@ -40,13 +41,17 @@ fn load_memory_from_file(path: &Path) -> Result<ChatMemory, std::io::Error> {
     }
     let file = File::open(path)?;
     let reader = BufReader::new(file);
-    let memory = serde_json::from_reader(reader)
+    let memory: ChatMemory = serde_json::from_reader(reader) // Explicit type for clarity
         .map_err(|e| std::io::Error::new(ErrorKind::InvalidData, e))?;
     Ok(memory)
 }
 
 fn save_memory_to_file(path: &Path, memory: &ChatMemory) -> Result<(), std::io::Error> {
-    let file = OpenOptions::new().write(true).create(true).truncate(true).open(path)?;
+    let file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(path)?;
     let writer = BufWriter::new(file);
     serde_json::to_writer_pretty(writer, memory)
         .map_err(|e| std::io::Error::new(ErrorKind::Other, e))?;
@@ -68,16 +73,27 @@ pub fn get_memory(id: &str, memory_type: &str) -> ChatMemory {
     let path = get_memory_file_path(id, memory_type);
     match load_memory_from_file(&path) {
         Ok(mut memory) => {
+            // Make memory mutable here for truncation
             if memory.messages.len() > MAX_HISTORY_LEN {
                 let start_index = memory.messages.len() - MAX_HISTORY_LEN;
                 memory.messages = memory.messages.split_off(start_index);
+                info!(
+                    "Truncated loaded memory for {} {} to {} messages",
+                    memory_type, id, MAX_HISTORY_LEN
+                );
             }
-            info!("Loaded memory for {} {} from file: {:?}", memory_type, id, path);
+            info!(
+                "Loaded memory for {} {} from file: {:?}",
+                memory_type, id, path
+            );
             memories_map.insert(id.to_string(), memory.clone());
             memory
         }
         Err(e) => {
-            warn!("Failed to load memory for {} {}: {}, creating new.", memory_type, id, e);
+            warn!(
+                "Failed to load memory for {} {}: {}, creating new.",
+                memory_type, id, e
+            );
             let new_memory = ChatMemory::default();
             memories_map.insert(id.to_string(), new_memory.clone());
             new_memory
@@ -86,42 +102,67 @@ pub fn get_memory(id: &str, memory_type: &str) -> ChatMemory {
 }
 
 pub fn update_memory(id: &str, memory_type: &str, user_prompt: &str, assistant_response: &str) {
-    let mut memories_map = match memory_type {
+    let mut memories_map_guard = match memory_type {
+        // Renamed to avoid confusion with inner map
         "user" => USER_MEMORIES.lock().unwrap(),
         "server" => SERVER_MEMORIES.lock().unwrap(),
-        _ => panic!("Invalid memory type"),
+        _ => panic!("Invalid memory type for update"),
     };
 
-    let mut memory = memories_map.entry(id.to_string()).or_insert_with(|| {
+    // Get a mutable reference to the ChatMemory in the map, or insert a default one if it doesn't exist.
+    // `memory` is a mutable reference to the data *inside* the HashMap.
+    let memory_entry = memories_map_guard.entry(id.to_string()).or_insert_with(|| {
+        warn!(
+            "Memory not found in cache for update of {} {}, attempting to load or create new.",
+            memory_type, id
+        );
         let path = get_memory_file_path(id, memory_type);
-        load_memory_from_file(&path).unwrap_or_else(|_| {
-            warn!("Failed to load memory for update, creating new for {} {}", memory_type, id);
+        load_memory_from_file(&path).unwrap_or_else(|e| {
+            warn!(
+                "Failed to load memory from file for update of {} {}: {}, creating new.",
+                memory_type, id, e
+            );
             ChatMemory::default()
         })
     });
-    
-    memory.messages.push(Message {
+
+    // Now, modify `memory_entry` directly.
+    memory_entry.messages.push(Message {
         role: "user".to_string(),
         content: user_prompt.to_string(),
     });
-    memory.messages.push(Message {
+    memory_entry.messages.push(Message {
         role: "assistant".to_string(),
         content: assistant_response.to_string(),
     });
 
-    if memory.messages.len() > MAX_HISTORY_LEN {
-        let start_index = memory.messages.len() - MAX_HISTORY_LEN;
-        memory.messages = memory.messages.split_off(start_index);
+    // Truncate memory to keep it from growing indefinitely
+    if memory_entry.messages.len() > MAX_HISTORY_LEN {
+        let start_index = memory_entry.messages.len() - MAX_HISTORY_LEN;
+        memory_entry.messages = memory_entry.messages.split_off(start_index);
+        info!(
+            "Truncated memory for {} {} during update to {} messages",
+            memory_type, id, MAX_HISTORY_LEN
+        );
     }
-    
-    memories_map.insert(id.to_string(), memory.clone());
 
+    // The modifications to `memory_entry` are directly reflected in the `memories_map_guard` (HashMap).
+    // No need for a separate `insert` call here if you used `entry().or_insert_with()`.
+
+    // Save the modified memory (which is memory_entry) to disk
     let path = get_memory_file_path(id, memory_type);
-    if let Err(e) = save_memory_to_file(&path, memory) {
+    // We need to clone memory_entry to pass to save_memory_to_file because save_memory_to_file takes ownership by value or an immutable ref.
+    // Or, save_memory_to_file could take &ChatMemory
+    if let Err(e) = save_memory_to_file(&path, &memory_entry) {
+        // Pass as reference
         error!("Failed to save memory for {} {}: {}", memory_type, id, e);
     } else {
-        info!("Saved memory for {} {} to file: {:?}", memory_type, id, path);
+        info!(
+            "Saved memory for {} {} to file: {:?}",
+            memory_type, id, path
+        );
     }
+    // The MutexGuard `memories_map_guard` is dropped at the end of this function, releasing the lock.
 }
 
 pub fn setup_rust_logging() {
