@@ -3,11 +3,11 @@
 
 # Go build outputs
 go/elybot
-elybot # If built to root by Makefile
+elybot
 
 # Rust build artifacts
 rust/target/
-rust/Cargo.lock # Optional, depends on your policy for library vs binary
+rust/Cargo.lock 
 
 # OS-specific files
 .DS_Store
