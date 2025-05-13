@@ -1,6 +1,3 @@
-Here’s your updated `README.md` with the requested changes applied:
-
----
 
 # Elybot - Hybrid Go/Rust Discord Roleplay Bot
 
@@ -172,4 +169,3 @@ Contributions are welcome! Please feel free to submit issues or pull requests.
 
 This project is licensed under the MIT License - see the LICENSE file for details.
 
----
