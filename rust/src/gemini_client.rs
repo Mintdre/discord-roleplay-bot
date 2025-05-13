@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::env;
 use std::io::{self, Write};
 
-#[derive(Serialize, Deserialize, Debug, Clone)] // Added Deserialize & Clone
+#[derive(Serialize, Deserialize, Debug, Clone)]
 struct GeminiPart {
     text: String,
 }
