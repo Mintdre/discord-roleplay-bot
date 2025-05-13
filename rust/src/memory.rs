@@ -1,12 +1,13 @@
 use chrono;
 use lazy_static::lazy_static;
-use log::{error, info, warn};
+use log::{debug, error, info, log, warn, Level, LevelFilter};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::env;
 use std::fs::{self, File, OpenOptions};
-use std::io::{BufReader, BufWriter, ErrorKind}; // Removed Read, Write as they are not directly used
+use std::io::{BufReader, BufWriter, ErrorKind};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex; // Keep chrono for logging timestamp
+use std::sync::Mutex;
 
 const MEMORY_DIR: &str = "data";
 const MAX_HISTORY_LEN: usize = 20;
@@ -41,7 +42,7 @@ fn load_memory_from_file(path: &Path) -> Result<ChatMemory, std::io::Error> {
     }
     let file = File::open(path)?;
     let reader = BufReader::new(file);
-    let memory: ChatMemory = serde_json::from_reader(reader) // Explicit type for clarity
+    let memory: ChatMemory = serde_json::from_reader(reader)
         .map_err(|e| std::io::Error::new(ErrorKind::InvalidData, e))?;
     Ok(memory)
 }
@@ -64,16 +65,13 @@ pub fn get_memory(id: &str, memory_type: &str) -> ChatMemory {
         "server" => SERVER_MEMORIES.lock().unwrap(),
         _ => panic!("Invalid memory type"),
     };
-
     if let Some(memory) = memories_map.get(id) {
         info!("Loaded memory for {} {} from cache", memory_type, id);
         return memory.clone();
     }
-
     let path = get_memory_file_path(id, memory_type);
     match load_memory_from_file(&path) {
         Ok(mut memory) => {
-            // Make memory mutable here for truncation
             if memory.messages.len() > MAX_HISTORY_LEN {
                 let start_index = memory.messages.len() - MAX_HISTORY_LEN;
                 memory.messages = memory.messages.split_off(start_index);
@@ -103,14 +101,10 @@ pub fn get_memory(id: &str, memory_type: &str) -> ChatMemory {
 
 pub fn update_memory(id: &str, memory_type: &str, user_prompt: &str, assistant_response: &str) {
     let mut memories_map_guard = match memory_type {
-        // Renamed to avoid confusion with inner map
         "user" => USER_MEMORIES.lock().unwrap(),
         "server" => SERVER_MEMORIES.lock().unwrap(),
         _ => panic!("Invalid memory type for update"),
     };
-
-    // Get a mutable reference to the ChatMemory in the map, or insert a default one if it doesn't exist.
-    // `memory` is a mutable reference to the data *inside* the HashMap.
     let memory_entry = memories_map_guard.entry(id.to_string()).or_insert_with(|| {
         warn!(
             "Memory not found in cache for update of {} {}, attempting to load or create new.",
@@ -125,8 +119,6 @@ pub fn update_memory(id: &str, memory_type: &str, user_prompt: &str, assistant_r
             ChatMemory::default()
         })
     });
-
-    // Now, modify `memory_entry` directly.
     memory_entry.messages.push(Message {
         role: "user".to_string(),
         content: user_prompt.to_string(),
@@ -135,8 +127,6 @@ pub fn update_memory(id: &str, memory_type: &str, user_prompt: &str, assistant_r
         role: "assistant".to_string(),
         content: assistant_response.to_string(),
     });
-
-    // Truncate memory to keep it from growing indefinitely
     if memory_entry.messages.len() > MAX_HISTORY_LEN {
         let start_index = memory_entry.messages.len() - MAX_HISTORY_LEN;
         memory_entry.messages = memory_entry.messages.split_off(start_index);
@@ -145,16 +135,8 @@ pub fn update_memory(id: &str, memory_type: &str, user_prompt: &str, assistant_r
             memory_type, id, MAX_HISTORY_LEN
         );
     }
-
-    // The modifications to `memory_entry` are directly reflected in the `memories_map_guard` (HashMap).
-    // No need for a separate `insert` call here if you used `entry().or_insert_with()`.
-
-    // Save the modified memory (which is memory_entry) to disk
     let path = get_memory_file_path(id, memory_type);
-    // We need to clone memory_entry to pass to save_memory_to_file because save_memory_to_file takes ownership by value or an immutable ref.
-    // Or, save_memory_to_file could take &ChatMemory
     if let Err(e) = save_memory_to_file(&path, &memory_entry) {
-        // Pass as reference
         error!("Failed to save memory for {} {}: {}", memory_type, id, e);
     } else {
         info!(
@@ -162,10 +144,16 @@ pub fn update_memory(id: &str, memory_type: &str, user_prompt: &str, assistant_r
             memory_type, id, path
         );
     }
-    // The MutexGuard `memories_map_guard` is dropped at the end of this function, releasing the lock.
 }
 
 pub fn setup_rust_logging() {
+    // --- Read log level from environment variable ---
+    let log_level_str = env::var("ELYBOT_LOG_LEVEL").unwrap_or_else(|_| "info".to_string());
+    let (log_level_filter, log_level_name) = match log_level_str.to_lowercase().as_str() {
+        "debug" | "verbose" | "trace" => (LevelFilter::Debug, "DEBUG"),
+        _ => (LevelFilter::Info, "INFO"), // Default to Info
+    };
+
     fern::Dispatch::new()
         .format(|out, message, record| {
             out.finish(format_args!(
@@ -176,9 +164,10 @@ pub fn setup_rust_logging() {
                 message
             ))
         })
-        .level(log::LevelFilter::Info)
+        .level(log_level_filter)
         .chain(std::io::stdout())
         .apply()
         .expect("Failed to initialize logger");
-    info!("Rust logging initialized.");
+
+    log!(target: "ely_rust::memory", log_level_filter.to_level().unwrap_or(Level::Info), "Rust logging configured to {} level.", log_level_name);
 }
